@@ -700,9 +700,9 @@ impl<'db> CompletionContext<'db> {
         db: &'db RootDatabase,
         position @ FilePosition { file_id, offset }: FilePosition,
         config: &'db CompletionConfig<'db>,
+        sema: Semantics<'db, RootDatabase>,
     ) -> Option<(CompletionContext<'db>, CompletionAnalysis<'db>)> {
         let _p = tracing::info_span!("CompletionContext::new").entered();
-        let sema = Semantics::new(db);
 
         let editioned_file_id = sema.attach_first_edition(file_id)?;
         let original_file = sema.parse(editioned_file_id);

@@ -20,8 +20,8 @@ use crate::{FilePosition, NavigationTarget, RangeInfo, TryToNav};
 pub(crate) fn goto_implementation(
     db: &RootDatabase,
     FilePosition { file_id, offset }: FilePosition,
+    sema: Semantics<'_, RootDatabase>,
 ) -> Option<RangeInfo<Vec<NavigationTarget>>> {
-    let sema = Semantics::new(db);
     let source_file = sema.parse_guess_edition(file_id);
     let syntax = source_file.syntax().clone();
 

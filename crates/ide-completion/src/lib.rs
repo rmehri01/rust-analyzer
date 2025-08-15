@@ -187,8 +187,9 @@ pub fn completions(
     config: &CompletionConfig<'_>,
     position: FilePosition,
     trigger_character: Option<char>,
+    sema: hir::Semantics<'_, RootDatabase>,
 ) -> Option<Vec<CompletionItem>> {
-    let (ctx, analysis) = &CompletionContext::new(db, position, config)?;
+    let (ctx, analysis) = &CompletionContext::new(db, position, config, sema)?;
     let mut completions = Completions::default();
 
     // prevent `(` from triggering unwanted completion noise

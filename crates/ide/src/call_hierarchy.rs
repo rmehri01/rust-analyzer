@@ -28,17 +28,17 @@ pub struct CallHierarchyConfig {
 pub(crate) fn call_hierarchy(
     db: &RootDatabase,
     position: FilePosition,
+    sema: &Semantics<'_, RootDatabase>,
 ) -> Option<RangeInfo<Vec<NavigationTarget>>> {
-    goto_definition::goto_definition(db, position)
+    goto_definition::goto_definition(db, position, sema)
 }
 
 pub(crate) fn incoming_calls(
     db: &RootDatabase,
     CallHierarchyConfig { exclude_tests }: CallHierarchyConfig,
     FilePosition { file_id, offset }: FilePosition,
+    sema: &Semantics<'_, RootDatabase>,
 ) -> Option<Vec<CallItem>> {
-    let sema = &Semantics::new(db);
-
     let file = sema.parse_guess_edition(file_id);
     let file = file.syntax();
     let mut calls = CallLocations::default();
@@ -91,8 +91,8 @@ pub(crate) fn outgoing_calls(
     db: &RootDatabase,
     CallHierarchyConfig { exclude_tests }: CallHierarchyConfig,
     FilePosition { file_id, offset }: FilePosition,
+    sema: Semantics<'_, RootDatabase>,
 ) -> Option<Vec<CallItem>> {
-    let sema = Semantics::new(db);
     let file = sema.parse_guess_edition(file_id);
     let file = file.syntax();
     let token = pick_best_token(file.token_at_offset(offset), |kind| match kind {

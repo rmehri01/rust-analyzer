@@ -39,8 +39,8 @@ use syntax::{
 pub(crate) fn goto_definition(
     db: &RootDatabase,
     FilePosition { file_id, offset }: FilePosition,
+    sema: &Semantics<'_, RootDatabase>,
 ) -> Option<RangeInfo<Vec<NavigationTarget>>> {
-    let sema = &Semantics::new(db);
     let file = sema.parse_guess_edition(file_id).syntax().clone();
     let edition =
         sema.attach_first_edition(file_id).map(|it| it.edition(db)).unwrap_or(Edition::CURRENT);

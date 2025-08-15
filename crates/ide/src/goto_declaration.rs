@@ -69,7 +69,11 @@ pub(crate) fn goto_declaration(
         .flatten()
         .collect();
 
-    if info.is_empty() { goto_definition(db, position) } else { Some(RangeInfo::new(range, info)) }
+    if info.is_empty() {
+        goto_definition(db, position, &sema)
+    } else {
+        Some(RangeInfo::new(range, info))
+    }
 }
 
 #[cfg(test)]

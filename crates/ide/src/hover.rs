@@ -131,8 +131,8 @@ pub(crate) fn hover(
     db: &RootDatabase,
     frange @ FileRange { file_id, range }: FileRange,
     config: &HoverConfig,
+    sema: &hir::Semantics<'_, RootDatabase>,
 ) -> Option<RangeInfo<HoverResult>> {
-    let sema = &hir::Semantics::new(db);
     let file = sema.parse_guess_edition(file_id).syntax().clone();
     let edition =
         sema.attach_first_edition(file_id).map(|it| it.edition(db)).unwrap_or(Edition::CURRENT);

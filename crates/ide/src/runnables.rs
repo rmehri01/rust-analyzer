@@ -126,9 +126,11 @@ impl Runnable {
 // | VS Code | **rust-analyzer: Run** |
 //
 // ![Run](https://user-images.githubusercontent.com/48062697/113065583-055aae80-91b1-11eb-958f-d67efcaf6a2f.gif)
-pub(crate) fn runnables(db: &RootDatabase, file_id: FileId) -> Vec<Runnable> {
-    let sema = Semantics::new(db);
-
+pub(crate) fn runnables(
+    db: &RootDatabase,
+    file_id: FileId,
+    sema: Semantics<'_, RootDatabase>,
+) -> Vec<Runnable> {
     let mut res = Vec::new();
     // Record all runnables that come from macro expansions here instead.
     // In case an expansion creates multiple runnables we want to name them to avoid emitting a bunch of equally named runnables.

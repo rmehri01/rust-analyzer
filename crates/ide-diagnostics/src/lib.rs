@@ -307,6 +307,7 @@ pub fn syntax_diagnostics(
     db: &RootDatabase,
     config: &DiagnosticsConfig,
     file_id: FileId,
+    sema: Semantics<'_, RootDatabase>,
 ) -> Vec<Diagnostic> {
     let _p = tracing::info_span!("syntax_diagnostics").entered();
 
@@ -314,7 +315,6 @@ pub fn syntax_diagnostics(
         return Vec::new();
     }
 
-    let sema = Semantics::new(db);
     let editioned_file_id = sema
         .attach_first_edition(file_id)
         .unwrap_or_else(|| EditionedFileId::current_edition(db, file_id));
@@ -343,9 +343,9 @@ pub fn semantic_diagnostics(
     config: &DiagnosticsConfig,
     resolve: &AssistResolveStrategy,
     file_id: FileId,
+    sema: Semantics<'_, RootDatabase>,
 ) -> Vec<Diagnostic> {
     let _p = tracing::info_span!("semantic_diagnostics").entered();
-    let sema = Semantics::new(db);
     let editioned_file_id = sema
         .attach_first_edition(file_id)
         .unwrap_or_else(|| EditionedFileId::current_edition(db, file_id));
@@ -536,10 +536,11 @@ pub fn full_diagnostics(
     config: &DiagnosticsConfig,
     resolve: &AssistResolveStrategy,
     file_id: FileId,
+    sema: Semantics<'_, RootDatabase>,
 ) -> Vec<Diagnostic> {
     salsa::attach(db, || {
-        let mut res = syntax_diagnostics(db, config, file_id);
-        let sema = semantic_diagnostics(db, config, resolve, file_id);
+        let mut res = syntax_diagnostics(db, config, file_id, sema.clone());
+        let sema = semantic_diagnostics(db, config, resolve, file_id, sema);
         res.extend(sema);
         res
     })

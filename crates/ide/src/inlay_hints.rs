@@ -83,9 +83,9 @@ pub(crate) fn inlay_hints(
     file_id: FileId,
     range_limit: Option<TextRange>,
     config: &InlayHintsConfig,
+    sema: &Semantics<'_, RootDatabase>,
 ) -> Vec<InlayHint> {
     let _p = tracing::info_span!("inlay_hints").entered();
-    let sema = Semantics::new(db);
     let file_id = sema
         .attach_first_edition(file_id)
         .unwrap_or_else(|| EditionedFileId::current_edition(db, file_id));
@@ -97,7 +97,7 @@ pub(crate) fn inlay_hints(
     let Some(scope) = sema.scope(file) else {
         return acc;
     };
-    let famous_defs = FamousDefs(&sema, scope.krate());
+    let famous_defs = FamousDefs(sema, scope.krate());
     let display_target = famous_defs.1.to_display_target(sema.db);
 
     let ctx = &mut InlayHintCtx::default();
@@ -136,9 +136,9 @@ pub(crate) fn inlay_hints_resolve(
     hash: u64,
     config: &InlayHintsConfig,
     hasher: impl Fn(&InlayHint) -> u64,
+    sema: Semantics<'_, RootDatabase>,
 ) -> Option<InlayHint> {
     let _p = tracing::info_span!("inlay_hints_resolve").entered();
-    let sema = Semantics::new(db);
     let file_id = sema
         .attach_first_edition(file_id)
         .unwrap_or_else(|| EditionedFileId::current_edition(db, file_id));

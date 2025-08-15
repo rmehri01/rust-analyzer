@@ -473,7 +473,7 @@ impl Analysis {
         file_id: FileId,
         range: Option<TextRange>,
     ) -> Cancellable<Vec<InlayHint>> {
-        self.with_db(|db| inlay_hints::inlay_hints(db, file_id, range, config))
+        self.with_db(|db| inlay_hints::inlay_hints(db, file_id, range, config, &self.sema(db)))
     }
     pub fn inlay_hints_resolve(
         &self,
@@ -484,7 +484,15 @@ impl Analysis {
         hasher: impl Fn(&InlayHint) -> u64 + Send + UnwindSafe,
     ) -> Cancellable<Option<InlayHint>> {
         self.with_db(|db| {
-            inlay_hints::inlay_hints_resolve(db, file_id, resolve_range, hash, config, hasher)
+            inlay_hints::inlay_hints_resolve(
+                db,
+                file_id,
+                resolve_range,
+                hash,
+                config,
+                hasher,
+                self.sema(db),
+            )
         })
     }
 
@@ -514,7 +522,7 @@ impl Analysis {
         &self,
         position: FilePosition,
     ) -> Cancellable<Option<RangeInfo<Vec<NavigationTarget>>>> {
-        self.with_db(|db| goto_definition::goto_definition(db, position))
+        self.with_db(|db| goto_definition::goto_definition(db, position, &self.sema(db)))
     }
 
     /// Returns the declaration from the symbol at `position`.
@@ -530,7 +538,7 @@ impl Analysis {
         &self,
         position: FilePosition,
     ) -> Cancellable<Option<RangeInfo<Vec<NavigationTarget>>>> {
-        self.with_db(|db| goto_implementation::goto_implementation(db, position))
+        self.with_db(|db| goto_implementation::goto_implementation(db, position, self.sema(db)))
     }
 
     /// Returns the type definitions for the symbol at `position`.
@@ -549,7 +557,7 @@ impl Analysis {
         let search_scope = AssertUnwindSafe(search_scope);
         self.with_db(|db| {
             let _ = &search_scope;
-            references::find_all_refs(&Semantics::new(db), position, search_scope.0)
+            references::find_all_refs(&self.sema(db), position, search_scope.0)
         })
     }
 
@@ -559,7 +567,7 @@ impl Analysis {
         config: &HoverConfig,
         range: FileRange,
     ) -> Cancellable<Option<RangeInfo<HoverResult>>> {
-        self.with_db(|db| hover::hover(db, range, config))
+        self.with_db(|db| hover::hover(db, range, config, &self.sema(db)))
     }
 
     /// Returns moniker of symbol at position.
@@ -595,7 +603,7 @@ impl Analysis {
         &self,
         position: FilePosition,
     ) -> Cancellable<Option<RangeInfo<Vec<NavigationTarget>>>> {
-        self.with_db(|db| call_hierarchy::call_hierarchy(db, position))
+        self.with_db(|db| call_hierarchy::call_hierarchy(db, position, &self.sema(db)))
     }
 
     /// Computes incoming calls for the given file position.
@@ -604,7 +612,7 @@ impl Analysis {
         config: CallHierarchyConfig,
         position: FilePosition,
     ) -> Cancellable<Option<Vec<CallItem>>> {
-        self.with_db(|db| call_hierarchy::incoming_calls(db, config, position))
+        self.with_db(|db| call_hierarchy::incoming_calls(db, config, position, &self.sema(db)))
     }
 
     /// Computes outgoing calls for the given file position.
@@ -613,7 +621,7 @@ impl Analysis {
         config: CallHierarchyConfig,
         position: FilePosition,
     ) -> Cancellable<Option<Vec<CallItem>>> {
-        self.with_db(|db| call_hierarchy::outgoing_calls(db, config, position))
+        self.with_db(|db| call_hierarchy::outgoing_calls(db, config, position, self.sema(db)))
     }
 
     /// Returns a `mod name;` declaration which created the current module.
@@ -663,7 +671,7 @@ impl Analysis {
 
     /// Returns the set of possible targets to run for the current file.
     pub fn runnables(&self, file_id: FileId) -> Cancellable<Vec<Runnable>> {
-        self.with_db(|db| runnables::runnables(db, file_id))
+        self.with_db(|db| runnables::runnables(db, file_id, self.sema(db)))
     }
 
     /// Returns the set of tests for the given file position.
@@ -685,7 +693,9 @@ impl Analysis {
         highlight_config: HighlightConfig,
         file_id: FileId,
     ) -> Cancellable<Vec<HlRange>> {
-        self.with_db(|db| syntax_highlighting::highlight(db, highlight_config, file_id, None))
+        self.with_db(|db| {
+            syntax_highlighting::highlight(db, highlight_config, file_id, None, &self.sema(db))
+        })
     }
 
     /// Computes all ranges to highlight for a given item in a file.
@@ -694,9 +704,7 @@ impl Analysis {
         config: HighlightRelatedConfig,
         position: FilePosition,
     ) -> Cancellable<Option<Vec<HighlightedRange>>> {
-        self.with_db(|db| {
-            highlight_related::highlight_related(&Semantics::new(db), config, position)
-        })
+        self.with_db(|db| highlight_related::highlight_related(&self.sema(db), config, position))
     }
 
     /// Computes syntax highlighting for the given file range.
@@ -706,7 +714,13 @@ impl Analysis {
         frange: FileRange,
     ) -> Cancellable<Vec<HlRange>> {
         self.with_db(|db| {
-            syntax_highlighting::highlight(db, highlight_config, frange.file_id, Some(frange.range))
+            syntax_highlighting::highlight(
+                db,
+                highlight_config,
+                frange.file_id,
+                Some(frange.range),
+                &self.sema(db),
+            )
         })
     }
 
@@ -722,7 +736,9 @@ impl Analysis {
         position: FilePosition,
         trigger_character: Option<char>,
     ) -> Cancellable<Option<Vec<CompletionItem>>> {
-        self.with_db(|db| ide_completion::completions(db, config, position, trigger_character))
+        self.with_db(|db| {
+            ide_completion::completions(db, config, position, trigger_character, self.sema(db))
+        })
     }
 
     /// Resolves additional completion data at the position given.
@@ -743,7 +759,7 @@ impl Analysis {
         config: &DiagnosticsConfig,
         file_id: FileId,
     ) -> Cancellable<Vec<Diagnostic>> {
-        self.with_db(|db| ide_diagnostics::syntax_diagnostics(db, config, file_id))
+        self.with_db(|db| ide_diagnostics::syntax_diagnostics(db, config, file_id, self.sema(db)))
     }
 
     /// Computes the set of semantic diagnostics for the given file.
@@ -753,7 +769,9 @@ impl Analysis {
         resolve: AssistResolveStrategy,
         file_id: FileId,
     ) -> Cancellable<Vec<Diagnostic>> {
-        self.with_db(|db| ide_diagnostics::semantic_diagnostics(db, config, &resolve, file_id))
+        self.with_db(|db| {
+            ide_diagnostics::semantic_diagnostics(db, config, &resolve, file_id, self.sema(db))
+        })
     }
 
     /// Computes the set of both syntax and semantic diagnostics for the given file.
@@ -763,7 +781,9 @@ impl Analysis {
         resolve: AssistResolveStrategy,
         file_id: FileId,
     ) -> Cancellable<Vec<Diagnostic>> {
-        self.with_db(|db| ide_diagnostics::full_diagnostics(db, config, &resolve, file_id))
+        self.with_db(|db| {
+            ide_diagnostics::full_diagnostics(db, config, &resolve, file_id, self.sema(db))
+        })
     }
 
     /// Convenience function to return assists + quick fixes for diagnostics
@@ -781,11 +801,17 @@ impl Analysis {
 
         self.with_db(|db| {
             let diagnostic_assists = if diagnostics_config.enabled && include_fixes {
-                ide_diagnostics::full_diagnostics(db, diagnostics_config, &resolve, frange.file_id)
-                    .into_iter()
-                    .flat_map(|it| it.fixes.unwrap_or_default())
-                    .filter(|it| it.target.intersect(frange.range).is_some())
-                    .collect()
+                ide_diagnostics::full_diagnostics(
+                    db,
+                    diagnostics_config,
+                    &resolve,
+                    frange.file_id,
+                    self.sema(db),
+                )
+                .into_iter()
+                .flat_map(|it| it.fixes.unwrap_or_default())
+                .filter(|it| it.target.intersect(frange.range).is_some())
+                .collect()
             } else {
                 Vec::new()
             };
@@ -847,11 +873,11 @@ impl Analysis {
         config: &AnnotationConfig,
         file_id: FileId,
     ) -> Cancellable<Vec<Annotation>> {
-        self.with_db(|db| annotations::annotations(db, config, file_id))
+        self.with_db(|db| annotations::annotations(db, config, file_id, &self.sema(db)))
     }
 
     pub fn resolve_annotation(&self, annotation: Annotation) -> Cancellable<Annotation> {
-        self.with_db(|db| annotations::resolve_annotation(db, annotation))
+        self.with_db(|db| annotations::resolve_annotation(db, annotation, self.sema(db)))
     }
 
     pub fn move_item(

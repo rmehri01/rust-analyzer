@@ -191,9 +191,9 @@ pub(crate) fn highlight(
     config: HighlightConfig,
     file_id: FileId,
     range_to_highlight: Option<TextRange>,
+    sema: &Semantics<'_, RootDatabase>,
 ) -> Vec<HlRange> {
     let _p = tracing::info_span!("highlight").entered();
-    let sema = Semantics::new(db);
     let file_id = sema
         .attach_first_edition(file_id)
         .unwrap_or_else(|| EditionedFileId::current_edition(db, file_id));

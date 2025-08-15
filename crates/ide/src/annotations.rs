@@ -55,11 +55,12 @@ pub(crate) fn annotations(
     db: &RootDatabase,
     config: &AnnotationConfig,
     file_id: FileId,
+    sema: &Semantics<'_, RootDatabase>,
 ) -> Vec<Annotation> {
     let mut annotations = FxIndexSet::default();
 
     if config.annotate_runnables {
-        for runnable in runnables(db, file_id) {
+        for runnable in runnables(db, file_id, sema.clone()) {
             if should_skip_runnable(&runnable.kind, config.binary_target) {
                 continue;
             }
@@ -80,7 +81,7 @@ pub(crate) fn annotations(
         (annotation_range, target_pos)
     };
 
-    visit_file_defs(&Semantics::new(db), file_id, &mut |def| {
+    visit_file_defs(sema, file_id, &mut |def| {
         let range = match def {
             Definition::Const(konst) if config.annotate_references => {
                 konst.source(db).and_then(|node| name_range(db, node, file_id))
@@ -196,10 +197,14 @@ pub(crate) fn annotations(
         .collect()
 }
 
-pub(crate) fn resolve_annotation(db: &RootDatabase, mut annotation: Annotation) -> Annotation {
+pub(crate) fn resolve_annotation(
+    db: &RootDatabase,
+    mut annotation: Annotation,
+    sema: Semantics<'_, RootDatabase>,
+) -> Annotation {
     match annotation.kind {
         AnnotationKind::HasImpls { pos, ref mut data } => {
-            *data = goto_implementation(db, pos).map(|range| range.info);
+            *data = goto_implementation(db, pos, sema).map(|range| range.info);
         }
         AnnotationKind::HasReferences { pos, ref mut data } => {
             *data = find_all_refs(&Semantics::new(db), pos, None).map(|result| {

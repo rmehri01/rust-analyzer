@@ -257,6 +257,7 @@ pub(super) fn doc_comment(
             },
             tmp_file_id,
             None,
+            &analysis.sema(db),
         )
     }) {
         for HlRange { range, highlight, binding_hash } in ranges {

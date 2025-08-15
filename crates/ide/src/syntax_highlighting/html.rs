@@ -41,6 +41,7 @@ pub(crate) fn highlight_as_html(db: &RootDatabase, file_id: FileId, rainbow: boo
         },
         file_id.file_id(db),
         None,
+        &sema,
     );
     let text = file.to_string();
     let mut buf = String::new();
