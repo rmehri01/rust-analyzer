@@ -1,5 +1,6 @@
 use base_db::salsa;
 use expect_test::{Expect, expect};
+use hir::Semantics;
 
 use crate::{
     CompletionConfig,
@@ -17,7 +18,9 @@ fn check_with_config(
     expect: Expect,
 ) {
     let (db, position) = crate::tests::position(ra_fixture);
-    let (ctx, analysis) = crate::context::CompletionContext::new(&db, position, &config).unwrap();
+    let (ctx, analysis) =
+        crate::context::CompletionContext::new(&db, position, &config, Semantics::new(&db))
+            .unwrap();
 
     let mut acc = crate::completions::Completions::default();
     salsa::attach(ctx.db, || {

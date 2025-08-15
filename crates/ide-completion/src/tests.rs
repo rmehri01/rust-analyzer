@@ -26,7 +26,7 @@ mod visibility;
 
 use base_db::SourceDatabase;
 use expect_test::Expect;
-use hir::{PrefixKind, setup_tracing};
+use hir::{PrefixKind, Semantics, setup_tracing};
 use ide_db::{
     FilePosition, RootDatabase, SnippetCap,
     imports::insert_use::{ImportGranularity, InsertUseConfig},
@@ -243,7 +243,7 @@ pub(crate) fn check_edit_with_config(
     let ra_fixture_after = trim_indent(ra_fixture_after);
     let (db, position) = position(ra_fixture_before);
     let completions: Vec<CompletionItem> =
-        crate::completions(&db, &config, position, None).unwrap();
+        crate::completions(&db, &config, position, None, Semantics::new(&db)).unwrap();
     let (completion,) = completions
         .iter()
         .filter(|it| it.lookup() == what)
@@ -306,7 +306,7 @@ pub(crate) fn get_all_items(
     trigger_character: Option<char>,
 ) -> Vec<CompletionItem> {
     let (db, position) = position(code);
-    let res = crate::completions(&db, &config, position, trigger_character)
+    let res = crate::completions(&db, &config, position, trigger_character, Semantics::new(&db))
         .map_or_else(Vec::default, Into::into);
     // validate
     res.iter().for_each(|it| {

@@ -2,7 +2,7 @@
 
 mod overly_long_real_world_cases;
 
-use hir::setup_tracing;
+use hir::{Semantics, setup_tracing};
 use ide_db::{
     LineIndexDatabase, RootDatabase,
     assists::{AssistResolveStrategy, ExprFillDefaultMode},
@@ -79,6 +79,7 @@ fn check_nth_fix_with_config(
         &config,
         &AssistResolveStrategy::All,
         file_position.file_id.file_id(&db),
+        Semantics::new(&db),
     )
     .pop()
     .expect("no diagnostics");
@@ -132,6 +133,7 @@ pub(crate) fn check_has_fix(
         &conf,
         &AssistResolveStrategy::All,
         file_position.file_id.file_id(&db),
+        Semantics::new(&db),
     )
     .into_iter()
     .find(|d| {
@@ -171,6 +173,7 @@ pub(crate) fn check_no_fix(#[rust_analyzer::rust_fixture] ra_fixture: &str) {
         &DiagnosticsConfig::test_sample(),
         &AssistResolveStrategy::All,
         file_position.file_id.file_id(&db),
+        Semantics::new(&db),
     )
     .pop()
     .unwrap();
@@ -202,28 +205,35 @@ pub(crate) fn check_diagnostics_with_config(
     let _tracing = setup_tracing();
 
     let (db, files) = RootDatabase::with_many_files(ra_fixture);
+    let sema = Semantics::new(&db);
     let mut annotations = files
         .iter()
         .copied()
         .flat_map(|file_id| {
-            super::full_diagnostics(&db, &config, &AssistResolveStrategy::All, file_id.file_id(&db))
-                .into_iter()
-                .map(|d| {
-                    let mut annotation = String::new();
-                    if let Some(fixes) = &d.fixes {
-                        assert!(!fixes.is_empty());
-                        annotation.push_str("💡 ")
-                    }
-                    annotation.push_str(match d.severity {
-                        Severity::Error => "error",
-                        Severity::WeakWarning => "weak",
-                        Severity::Warning => "warn",
-                        Severity::Allow => "allow",
-                    });
-                    annotation.push_str(": ");
-                    annotation.push_str(&d.message);
-                    (d.range, annotation)
-                })
+            super::full_diagnostics(
+                &db,
+                &config,
+                &AssistResolveStrategy::All,
+                file_id.file_id(&db),
+                sema.clone(),
+            )
+            .into_iter()
+            .map(|d| {
+                let mut annotation = String::new();
+                if let Some(fixes) = &d.fixes {
+                    assert!(!fixes.is_empty());
+                    annotation.push_str("💡 ")
+                }
+                annotation.push_str(match d.severity {
+                    Severity::Error => "error",
+                    Severity::WeakWarning => "weak",
+                    Severity::Warning => "warn",
+                    Severity::Allow => "allow",
+                });
+                annotation.push_str(": ");
+                annotation.push_str(&d.message);
+                (d.range, annotation)
+            })
         })
         .map(|(diagnostic, annotation)| (diagnostic.file_id, (diagnostic.range, annotation)))
         .into_group_map();
@@ -274,8 +284,9 @@ fn test_disabled_diagnostics() {
 
     let (db, file_id) = RootDatabase::with_single_file(r#"mod foo;"#);
     let file_id = file_id.file_id(&db);
-
-    let diagnostics = super::full_diagnostics(&db, &config, &AssistResolveStrategy::All, file_id);
+    let sema = Semantics::new(&db);
+    let diagnostics =
+        super::full_diagnostics(&db, &config, &AssistResolveStrategy::All, file_id, sema.clone());
     assert!(diagnostics.is_empty());
 
     let diagnostics = super::full_diagnostics(
@@ -283,6 +294,7 @@ fn test_disabled_diagnostics() {
         &DiagnosticsConfig::test_sample(),
         &AssistResolveStrategy::All,
         file_id,
+        sema,
     );
     assert!(!diagnostics.is_empty());
 }
