@@ -19,6 +19,7 @@ either.workspace = true
 itertools.workspace = true
 tracing.workspace = true
 oorandom.workspace = true
+parking_lot.workspace = true
 pulldown-cmark-to-cmark.workspace = true
 pulldown-cmark.workspace = true
 url.workspace = true

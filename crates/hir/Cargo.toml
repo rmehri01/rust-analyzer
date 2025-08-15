@@ -21,6 +21,7 @@ smallvec.workspace = true
 tracing.workspace = true
 triomphe.workspace = true
 indexmap.workspace = true
+parking_lot.workspace = true
 
 ra-ap-rustc_type_ir.workspace = true
 

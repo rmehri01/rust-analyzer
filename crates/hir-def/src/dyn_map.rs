@@ -104,13 +104,14 @@ pub mod keys {
 }
 
 use std::{
+    any::Any,
     hash::Hash,
     marker::PhantomData,
     ops::{Index, IndexMut},
 };
 
 use rustc_hash::FxHashMap;
-use stdx::anymap::Map;
+use stdx::anymap::{Downcast, Map};
 
 pub struct Key<K, V, P = (K, V)> {
     _phantom: PhantomData<(K, V, P)>,
@@ -157,9 +158,14 @@ impl<K: Hash + Eq + 'static, V: 'static> Policy for (K, V) {
     }
 }
 
-#[derive(Default)]
-pub struct DynMap {
-    pub(crate) map: Map,
+pub struct DynMap<A: ?Sized + Downcast = dyn Any> {
+    pub(crate) map: Map<A>,
+}
+
+impl<A: ?Sized + Downcast> Default for DynMap<A> {
+    fn default() -> Self {
+        Self { map: Default::default() }
+    }
 }
 
 #[repr(transparent)]
@@ -181,17 +187,17 @@ impl<P: Policy> KeyMap<Key<P::K, P::V, P>> {
     }
 }
 
-impl<P: Policy> Index<Key<P::K, P::V, P>> for DynMap {
+impl<P: Policy, A: ?Sized + Downcast> Index<Key<P::K, P::V, P>> for DynMap<A> {
     type Output = KeyMap<Key<P::K, P::V, P>>;
     fn index(&self, _key: Key<P::K, P::V, P>) -> &Self::Output {
         // Safe due to `#[repr(transparent)]`.
-        unsafe { std::mem::transmute::<&DynMap, &KeyMap<Key<P::K, P::V, P>>>(self) }
+        unsafe { std::mem::transmute::<&DynMap<A>, &KeyMap<Key<P::K, P::V, P>>>(self) }
     }
 }
 
-impl<P: Policy> IndexMut<Key<P::K, P::V, P>> for DynMap {
+impl<P: Policy, A: ?Sized + Downcast> IndexMut<Key<P::K, P::V, P>> for DynMap<A> {
     fn index_mut(&mut self, _key: Key<P::K, P::V, P>) -> &mut Self::Output {
         // Safe due to `#[repr(transparent)]`.
-        unsafe { std::mem::transmute::<&mut DynMap, &mut KeyMap<Key<P::K, P::V, P>>>(self) }
+        unsafe { std::mem::transmute::<&mut DynMap<A>, &mut KeyMap<Key<P::K, P::V, P>>>(self) }
     }
 }

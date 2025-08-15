@@ -134,6 +134,7 @@ object = { version = "0.36.7", default-features = false, features = [
     "macho",
     "pe",
 ] }
+parking_lot = "0.12.4"
 process-wrap = { version = "8.2.1", features = ["std"] }
 pulldown-cmark-to-cmark = "10.0.4"
 pulldown-cmark = { version = "0.9.6", default-features = false }

@@ -38,7 +38,7 @@ use base_db::Crate;
 use either::Either;
 use span::{Edition, ErasedFileAstId, FileAstId, Span, SpanAnchor, SyntaxContext};
 use syntax::{
-    SyntaxNode, SyntaxToken, TextRange, TextSize,
+    Parse, SyntaxNode, SyntaxToken, TextRange, TextSize,
     ast::{self, AstNode},
 };
 
@@ -781,9 +781,7 @@ impl MacroCallKind {
 // simpler function calls if the map is only used once
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExpansionInfo {
-    expanded: InMacroFile<SyntaxNode>,
-    /// The argument TokenTree or item for attributes
-    arg: InFile<Option<SyntaxNode>>,
+    expanded: InMacroFile<Parse<SyntaxNode>>,
     exp_map: Arc<ExpansionSpanMap>,
     arg_map: SpanMap,
     loc: MacroCallLoc,
@@ -791,15 +789,15 @@ pub struct ExpansionInfo {
 
 impl ExpansionInfo {
     pub fn expanded(&self) -> InMacroFile<SyntaxNode> {
-        self.expanded.clone()
+        self.expanded.as_ref().map(|v| v.syntax_node().clone())
     }
 
-    pub fn arg(&self) -> InFile<Option<&SyntaxNode>> {
-        self.arg.as_ref().map(|it| it.as_ref())
+    pub fn arg(&self, db: &dyn ExpandDatabase) -> InFile<Option<SyntaxNode>> {
+        self.loc.kind.arg(db)
     }
 
-    pub fn call_file(&self) -> HirFileId {
-        self.arg.file_id
+    pub fn call_file(&self, db: &dyn ExpandDatabase) -> HirFileId {
+        self.arg(db).file_id
     }
 
     pub fn is_attr(&self) -> bool {
@@ -819,7 +817,7 @@ impl ExpansionInfo {
         span: Span,
     ) -> Option<InMacroFile<impl Iterator<Item = (SyntaxToken, SyntaxContext)> + '_>> {
         let tokens = self.exp_map.ranges_with_span_exact(span).flat_map(move |(range, ctx)| {
-            self.expanded.value.covering_element(range).into_token().zip(Some(ctx))
+            self.expanded().value.covering_element(range).into_token().zip(Some(ctx))
         });
 
         Some(InMacroFile::new(self.expanded.file_id, tokens))
@@ -834,7 +832,7 @@ impl ExpansionInfo {
         span: Span,
     ) -> Option<InMacroFile<impl Iterator<Item = (SyntaxToken, SyntaxContext)> + '_>> {
         let tokens = self.exp_map.ranges_with_span(span).flat_map(move |(range, ctx)| {
-            self.expanded.value.covering_element(range).into_token().zip(Some(ctx))
+            self.expanded().value.covering_element(range).into_token().zip(Some(ctx))
         });
 
         Some(InMacroFile::new(self.expanded.file_id, tokens))
@@ -846,7 +844,7 @@ impl ExpansionInfo {
         db: &dyn ExpandDatabase,
         offset: TextSize,
     ) -> (FileRange, SyntaxContext) {
-        debug_assert!(self.expanded.value.text_range().contains(offset));
+        debug_assert!(self.expanded().value.text_range().contains(offset));
         span_for_offset(db, &self.exp_map, offset)
     }
 
@@ -856,7 +854,7 @@ impl ExpansionInfo {
         db: &dyn ExpandDatabase,
         range: TextRange,
     ) -> Option<(FileRange, SyntaxContext)> {
-        debug_assert!(self.expanded.value.text_range().contains_range(range));
+        debug_assert!(self.expanded().value.text_range().contains_range(range));
         map_node_range_up(db, &self.exp_map, range)
     }
 
@@ -869,7 +867,7 @@ impl ExpansionInfo {
         db: &dyn ExpandDatabase,
         token: TextRange,
     ) -> InFile<smallvec::SmallVec<[TextRange; 1]>> {
-        debug_assert!(self.expanded.value.text_range().contains_range(token));
+        debug_assert!(self.expanded().value.text_range().contains_range(token));
         let span = self.exp_map.span_at(token.start());
         match &self.arg_map {
             SpanMap::RealSpanMap(_) => {
@@ -879,12 +877,12 @@ impl ExpansionInfo {
                 InFile { file_id, value: smallvec::smallvec![span.range + anchor_offset] }
             }
             SpanMap::ExpansionSpanMap(arg_map) => {
-                let Some(arg_node) = &self.arg.value else {
-                    return InFile::new(self.arg.file_id, smallvec::smallvec![]);
+                let Some(arg_node) = &self.arg(db).value else {
+                    return InFile::new(self.arg(db).file_id, smallvec::smallvec![]);
                 };
                 let arg_range = arg_node.text_range();
                 InFile::new(
-                    self.arg.file_id,
+                    self.arg(db).file_id,
                     arg_map
                         .ranges_with_span_exact(span)
                         .filter(|(range, _)| range.intersect(arg_range).is_some())
@@ -903,9 +901,9 @@ impl ExpansionInfo {
         let arg_map = db.span_map(arg_tt.file_id);
 
         let (parse, exp_map) = db.parse_macro_expansion(macro_file).value;
-        let expanded = InMacroFile { file_id: macro_file, value: parse.syntax_node() };
+        let expanded = InMacroFile { file_id: macro_file, value: parse };
 
-        ExpansionInfo { expanded, loc, arg: arg_tt, exp_map, arg_map }
+        ExpansionInfo { expanded, loc, exp_map, arg_map }
     }
 }
 

@@ -4,9 +4,10 @@ mod child_by_source;
 mod source_to_def;
 
 use std::{
-    cell::RefCell,
     convert::Infallible,
-    fmt, iter, mem,
+    fmt,
+    hash::{DefaultHasher, Hash, Hasher},
+    iter, mem,
     ops::{self, ControlFlow, Not},
 };
 
@@ -31,6 +32,7 @@ use hir_expand::{
 use hir_ty::diagnostics::unsafe_operations_for_body;
 use intern::{Interned, Symbol, sym};
 use itertools::Itertools;
+use parking_lot::RwLock;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::{SmallVec, smallvec};
 use span::{Edition, FileId, SyntaxContext};
@@ -41,6 +43,7 @@ use syntax::{
     algo::skip_trivia_token,
     ast::{self, HasAttrs as _, HasGenericParams},
 };
+use triomphe::Arc;
 
 use crate::{
     Adjust, Adjustment, Adt, AutoBorrow, BindingMode, BuiltinAttr, Callable, Const, ConstParam,
@@ -49,9 +52,10 @@ use crate::{
     Name, OverloadedDeref, ScopeDef, Static, Struct, ToolModule, Trait, TupleField, Type,
     TypeAlias, TypeParam, Union, Variant, VariantDef,
     db::HirDatabase,
-    semantics::source_to_def::{ChildContainer, SourceToDefCache, SourceToDefCtx},
+    semantics::source_to_def::{ChildContainer, SourceToDefCtx},
     source_analyzer::{SourceAnalyzer, name_hygiene, resolve_hir_path},
 };
+pub use source_to_def::SourceToDefCache;
 
 const CONTINUE_NO_BREAKS: ControlFlow<Infallible, ()> = ControlFlow::Continue(());
 
@@ -145,16 +149,18 @@ impl<'db> TypeInfo<'db> {
 }
 
 /// Primary API to get semantic information, like types, from syntax trees.
+#[derive(Clone)]
 pub struct Semantics<'db, DB: ?Sized> {
     pub db: &'db DB,
     imp: SemanticsImpl<'db>,
 }
 
+#[derive(Clone)]
 pub struct SemanticsImpl<'db> {
     pub db: &'db dyn HirDatabase,
-    s2d_cache: RefCell<SourceToDefCache>,
+    s2d_cache: Arc<RwLock<SourceToDefCache>>,
     /// MacroCall to its expansion's MacroCallId cache
-    macro_call_cache: RefCell<FxHashMap<InFile<ast::MacroCall>, MacroCallId>>,
+    macro_call_cache: Arc<RwLock<FxHashMap<InFile<SyntaxNodePtr>, MacroCallId>>>,
 }
 
 impl<DB: ?Sized> fmt::Debug for Semantics<'_, DB> {
@@ -186,6 +192,16 @@ impl<DB: HirDatabase> Semantics<'_, DB> {
     /// Creates an instance that's strongly coupled to its underlying database type.
     pub fn new(db: &DB) -> Semantics<'_, DB> {
         let impl_ = SemanticsImpl::new(db);
+        Semantics { db, imp: impl_ }
+    }
+
+    /// Creates an instance that's strongly coupled to its underlying database type.
+    pub fn with_caches(
+        db: &DB,
+        s2d_cache: Arc<RwLock<SourceToDefCache>>,
+        macro_call_cache: Arc<RwLock<FxHashMap<InFile<SyntaxNodePtr>, MacroCallId>>>,
+    ) -> Semantics<'_, DB> {
+        let impl_ = SemanticsImpl { db, s2d_cache, macro_call_cache };
         Semantics { db, imp: impl_ }
     }
 }
@@ -863,8 +879,7 @@ impl<'db> SemanticsImpl<'db> {
         &self,
         tok: InRealFile<SyntaxToken>,
     ) -> InFile<SyntaxToken> {
-        let Some(include) =
-            self.s2d_cache.borrow_mut().get_or_insert_include_for(self.db, tok.file_id)
+        let Some(include) = self.s2d_cache.write().get_or_insert_include_for(self.db, tok.file_id)
         else {
             return tok.into();
         };
@@ -1138,7 +1153,7 @@ impl<'db> SemanticsImpl<'db> {
         let mut stack: Vec<(_, SmallVec<[_; 2]>)> = vec![];
         let include = file_id
             .file_id()
-            .and_then(|file_id| self.s2d_cache.borrow_mut().get_or_insert_include_for(db, file_id));
+            .and_then(|file_id| self.s2d_cache.write().get_or_insert_include_for(db, file_id));
         match include {
             Some(include) => {
                 // include! inputs are always from real files, so they only need to be handled once upfront
@@ -1149,7 +1164,7 @@ impl<'db> SemanticsImpl<'db> {
             }
         }
 
-        let mut m_cache = self.macro_call_cache.borrow_mut();
+        let mut m_cache = self.macro_call_cache.write();
 
         // Filters out all tokens that contain the given range (usually the macro call), any such
         // token is redundant as the corresponding macro call has already been processed
@@ -1277,11 +1292,12 @@ impl<'db> SemanticsImpl<'db> {
                                 return None;
                             }
                             let mcall = InFile::new(expansion, macro_call);
-                            let file_id = match m_cache.get(&mcall) {
+                            let file_id = match m_cache.get(&mcall.syntax().map(SyntaxNodePtr::new))
+                            {
                                 Some(&it) => it,
                                 None => {
                                     let it = ast::MacroCall::to_def(self, mcall.as_ref())?;
-                                    m_cache.insert(mcall, it);
+                                    m_cache.insert(mcall.syntax().map(SyntaxNodePtr::new), it);
                                     it
                                 }
                             };
@@ -1492,7 +1508,7 @@ impl<'db> SemanticsImpl<'db> {
 
                 self.with_ctx(|ctx| {
                     let expansion_info = ctx.cache.get_or_insert_expansion(ctx.db, macro_file);
-                    expansion_info.arg().map(|node| node?.parent()).transpose()
+                    expansion_info.arg(ctx.db).map(|node| node?.parent()).transpose()
                 })
             }
         })
@@ -1851,7 +1867,7 @@ impl<'db> SemanticsImpl<'db> {
     }
 
     fn with_ctx<F: FnOnce(&mut SourceToDefCtx<'_, '_>) -> T, T>(&self, f: F) -> T {
-        let mut ctx = SourceToDefCtx { db: self.db, cache: &mut self.s2d_cache.borrow_mut() };
+        let mut ctx = SourceToDefCtx { db: self.db, cache: &mut self.s2d_cache.write() };
         f(&mut ctx)
     }
 
@@ -1976,11 +1992,7 @@ impl<'db> SemanticsImpl<'db> {
     }
 
     fn cache(&self, root_node: SyntaxNode, file_id: HirFileId) {
-        SourceToDefCache::cache(
-            &mut self.s2d_cache.borrow_mut().root_to_file_cache,
-            root_node,
-            file_id,
-        );
+        SourceToDefCache::cache(&mut self.s2d_cache.write().root_to_file_cache, root_node, file_id);
     }
 
     pub fn assert_contains_node(&self, node: &SyntaxNode) {
@@ -1988,8 +2000,10 @@ impl<'db> SemanticsImpl<'db> {
     }
 
     fn lookup(&self, root_node: &SyntaxNode) -> Option<HirFileId> {
-        let cache = self.s2d_cache.borrow();
-        cache.root_to_file_cache.get(root_node).copied()
+        let cache = self.s2d_cache.read();
+        let mut hasher = DefaultHasher::new();
+        root_node.hash(&mut hasher);
+        cache.root_to_file_cache.get(&hasher.finish()).copied()
     }
 
     fn wrap_node_infile<N: AstNode>(&self, node: N) -> InFile<N> {
@@ -2014,7 +2028,7 @@ impl<'db> SemanticsImpl<'db> {
                 node,
                 root_node,
                 self.s2d_cache
-                    .borrow()
+                    .read()
                     .root_to_file_cache
                     .keys()
                     .map(|it| format!("{it:?}"))

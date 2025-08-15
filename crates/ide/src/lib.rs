@@ -58,11 +58,18 @@ mod view_memory_layout;
 mod view_mir;
 mod view_syntax_tree;
 
-use std::panic::{AssertUnwindSafe, UnwindSafe};
+use std::{
+    cell::RefCell,
+    fmt,
+    panic::{AssertUnwindSafe, UnwindSafe},
+};
 
 use cfg::CfgOptions;
 use fetch_crates::CrateInfo;
-use hir::{ChangeWithProcMacros, EditionedFileId, crate_def_map, sym};
+use hir::{
+    ChangeWithProcMacros, EditionedFileId, InFile, MacroCallId, SourceToDefCache, crate_def_map,
+    sym,
+};
 use ide_db::{
     FxHashMap, FxIndexSet, LineIndexDatabase,
     base_db::{
@@ -71,7 +78,8 @@ use ide_db::{
     },
     prime_caches, symbol_index,
 };
-use syntax::SourceFile;
+use parking_lot::RwLock;
+use syntax::{SourceFile, SyntaxNodePtr};
 use triomphe::Arc;
 use view_memory_layout::{RecursiveMemoryLayout, view_memory_layout};
 
@@ -157,18 +165,24 @@ impl<T> RangeInfo<T> {
 }
 
 /// `AnalysisHost` stores the current state of the world.
-#[derive(Debug)]
 pub struct AnalysisHost {
     db: RootDatabase,
+    s2d_cache: AssertUnwindSafe<RefCell<Arc<RwLock<SourceToDefCache>>>>,
+    macro_call_cache:
+        AssertUnwindSafe<RefCell<Arc<RwLock<FxHashMap<InFile<SyntaxNodePtr>, MacroCallId>>>>>,
 }
 
 impl AnalysisHost {
     pub fn new(lru_capacity: Option<u16>) -> AnalysisHost {
-        AnalysisHost { db: RootDatabase::new(lru_capacity) }
+        AnalysisHost {
+            db: RootDatabase::new(lru_capacity),
+            s2d_cache: Default::default(),
+            macro_call_cache: Default::default(),
+        }
     }
 
     pub fn with_database(db: RootDatabase) -> AnalysisHost {
-        AnalysisHost { db }
+        AnalysisHost { db, s2d_cache: Default::default(), macro_call_cache: Default::default() }
     }
 
     pub fn update_lru_capacity(&mut self, lru_capacity: Option<u16>) {
@@ -182,12 +196,19 @@ impl AnalysisHost {
     /// Returns a snapshot of the current state, which you can query for
     /// semantic information.
     pub fn analysis(&self) -> Analysis {
-        Analysis { db: self.db.clone() }
+        Analysis {
+            db: self.db.clone(),
+            s2d_cache: std::panic::AssertUnwindSafe(self.s2d_cache.clone()),
+            macro_call_cache: std::panic::AssertUnwindSafe(self.macro_call_cache.clone()),
+        }
     }
 
     /// Applies changes to the current state of the world. If there are
     /// outstanding snapshots, they will be canceled.
     pub fn apply_change(&mut self, change: ChangeWithProcMacros) {
+        // TODO: is this the only place to cancel?
+        *self.s2d_cache.borrow_mut() = Default::default();
+        *self.macro_call_cache.borrow_mut() = Default::default();
         self.db.apply_change(change);
     }
 
@@ -216,9 +237,11 @@ impl Default for AnalysisHost {
 /// entry point for asking semantic information about the world. When the world
 /// state is advanced using `AnalysisHost::apply_change` method, all existing
 /// `Analysis` are canceled (most method return `Err(Canceled)`).
-#[derive(Debug)]
 pub struct Analysis {
     db: RootDatabase,
+    s2d_cache: AssertUnwindSafe<RefCell<Arc<RwLock<SourceToDefCache>>>>,
+    macro_call_cache:
+        AssertUnwindSafe<RefCell<Arc<RwLock<FxHashMap<InFile<SyntaxNodePtr>, MacroCallId>>>>>,
 }
 
 // As a general design guideline, `Analysis` API are intended to be independent
@@ -850,6 +873,14 @@ impl Analysis {
         file_id.file_id(&self.db)
     }
 
+    pub fn sema<'db>(&self, db: &'db RootDatabase) -> Semantics<'db, RootDatabase> {
+        Semantics::with_caches(
+            db,
+            Arc::clone(&self.s2d_cache.borrow()),
+            Arc::clone(&self.macro_call_cache.borrow()),
+        )
+    }
+
     /// Performs an operation on the database that may be canceled.
     ///
     /// rust-analyzer needs to be able to answer semantic questions about the
@@ -869,6 +900,12 @@ impl Analysis {
     {
         let snap = self.db.clone();
         Cancelled::catch(|| f(&snap))
+    }
+}
+
+impl fmt::Debug for Analysis {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Analysis").field("db", &self.db).finish()
     }
 }
 

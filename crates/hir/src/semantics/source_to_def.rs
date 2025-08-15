@@ -85,6 +85,11 @@
 //! active crate for a given position, and then provide an API to resolve all
 //! syntax nodes against this specific crate.
 
+use std::{
+    any::Any,
+    hash::{DefaultHasher, Hash, Hasher},
+};
+
 use either::Either;
 use hir_def::{
     AdtId, BlockId, ConstId, ConstParamId, DefWithBodyId, EnumId, EnumVariantId, ExternBlockId,
@@ -115,23 +120,25 @@ use tt::TextRange;
 use crate::{InFile, InlineAsmOperand, db::HirDatabase, semantics::child_by_source::ChildBySource};
 
 #[derive(Default)]
-pub(super) struct SourceToDefCache {
-    pub(super) dynmap_cache: FxHashMap<(ChildContainer, HirFileId), DynMap>,
+pub struct SourceToDefCache {
+    pub(super) dynmap_cache: FxHashMap<(ChildContainer, HirFileId), DynMap<dyn Any + Send + Sync>>,
     expansion_info_cache: FxHashMap<MacroCallId, ExpansionInfo>,
     pub(super) file_to_def_cache: FxHashMap<FileId, SmallVec<[ModuleId; 1]>>,
     pub(super) included_file_cache: FxHashMap<EditionedFileId, Option<MacroCallId>>,
     /// Rootnode to HirFileId cache
-    pub(super) root_to_file_cache: FxHashMap<SyntaxNode, HirFileId>,
+    pub(super) root_to_file_cache: FxHashMap<u64, HirFileId>,
 }
 
 impl SourceToDefCache {
     pub(super) fn cache(
-        root_to_file_cache: &mut FxHashMap<SyntaxNode, HirFileId>,
+        root_to_file_cache: &mut FxHashMap<u64, HirFileId>,
         root_node: SyntaxNode,
         file_id: HirFileId,
     ) {
         assert!(root_node.parent().is_none());
-        let prev = root_to_file_cache.insert(root_node, file_id);
+        let mut hasher = DefaultHasher::new();
+        root_node.hash(&mut hasher);
+        let prev = root_to_file_cache.insert(hasher.finish(), file_id);
         assert!(prev.is_none() || prev == Some(file_id));
     }
 
@@ -432,12 +439,19 @@ impl SourceToDefCtx<'_, '_> {
         self.dyn_map(src)?[key].get(&AstPtr::new(src.value)).copied()
     }
 
-    fn dyn_map<Ast: AstNode + 'static>(&mut self, src: InFile<&Ast>) -> Option<&DynMap> {
+    fn dyn_map<Ast: AstNode + 'static>(
+        &mut self,
+        src: InFile<&Ast>,
+    ) -> Option<&DynMap<dyn Any + Send + Sync>> {
         let container = self.find_container(src.map(|it| it.syntax()))?;
         Some(self.cache_for(container, src.file_id))
     }
 
-    fn cache_for(&mut self, container: ChildContainer, file_id: HirFileId) -> &DynMap {
+    fn cache_for(
+        &mut self,
+        container: ChildContainer,
+        file_id: HirFileId,
+    ) -> &DynMap<dyn Any + Send + Sync> {
         let db = self.db;
         self.cache
             .dynmap_cache
@@ -596,7 +610,7 @@ impl SourceToDefCtx<'_, '_> {
             None => {
                 let macro_file = node.file_id.macro_file()?;
                 let expansion_info = this.cache.get_or_insert_expansion(this.db, macro_file);
-                expansion_info.arg().map(|node| node?.parent()).transpose()
+                expansion_info.arg(this.db).map(|node| node?.parent()).transpose()
             }
         };
         let mut deepest_child_in_same_file = node.cloned();
@@ -745,7 +759,11 @@ impl_from! {
 }
 
 impl ChildContainer {
-    fn child_by_source(self, db: &dyn HirDatabase, file_id: HirFileId) -> DynMap {
+    fn child_by_source(
+        self,
+        db: &dyn HirDatabase,
+        file_id: HirFileId,
+    ) -> DynMap<dyn Any + Send + Sync> {
         let _p = tracing::info_span!("ChildContainer::child_by_source").entered();
         match self {
             ChildContainer::DefWithBodyId(it) => it.child_by_source(db, file_id),
